@@ -1,0 +1,7 @@
+# Caching stuff
+*.pyc
+__pycache__
+
+# Local storage/tracking info
+recording_settings.json
+selection_history.json

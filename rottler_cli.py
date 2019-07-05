@@ -10,6 +10,7 @@ Created on Thu Jul  4 14:11:17 2019
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Imports
 
+import argparse
 import os
 import json
 import cv2
@@ -35,6 +36,48 @@ from local.eolib.utils.cli_tools import ranger_multifile_select, cli_prompt_with
 
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Define functions
+
+# .....................................................................................................................
+
+def parse_args():
+    
+    # Get existing/default recording settings so we can use them as defaults for the script arguments
+    recording_settings = load_recording_settings()
+    default_recording_ext = recording_settings.get("recording_ext")
+    default_codec = recording_settings.get("codec")
+    
+    # Set up argument parsing
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-d", "--display", default = True, action = "store_false",
+                    help = "Disable the output display. Gives a slight speed boost & prevents pop-up interruptions.")
+    ap.add_argument("-x", "--extension", default = default_recording_ext, type = str,
+                    help = "File extension of recorded videos (.avi, .mp4, .mkv, etc.). \
+                            (Default: {})".format(default_recording_ext))
+    ap.add_argument("-c", "--codec", default = default_codec, type = str,
+                    help = "FourCC code used for recording (X264, XVID, MJPG, mp4v, etc.). \
+                            (Default: {})".format(default_codec))
+    
+    # Get arg inputs into a dictionary
+    args = vars(ap.parse_args())
+    
+    # Separate arg inputs for convenience
+    arg_display = args.get("display")
+    arg_codec = args.get("codec")
+    arg_ext = args.get("extension")
+    
+    # Make sure the recording arguments are 'safe' (i.e. extension starts with a . and the codec has 4 characters)
+    safe_ext = arg_ext if arg_ext[0] == "." else "." + arg_ext
+    safe_codec = arg_codec if len(arg_codec) == 4 else arg_codec[0:4].zfill(4)
+    
+    # Check if recording arguments are different from defaults
+    ext_changed = (safe_ext != default_recording_ext)
+    codec_changed = (safe_codec != default_codec)
+    update_recording_settings = (ext_changed or codec_changed)
+    
+    # Save recording settings (but only if the arguments were different from defaults!)
+    save_recording_settings(safe_ext, safe_codec, overwrite_existing = update_recording_settings)
+    
+    return arg_display, safe_ext, safe_codec
 
 # .....................................................................................................................
 
@@ -94,19 +137,23 @@ def load_selection_history(file_name = "selection_history.json"):
 
 # .....................................................................................................................
     
-def save_recording_settings(recording_ext, codec, file_name = "recording_settings.json"):
+def save_recording_settings(recording_ext, codec, overwrite_existing = False, file_name = "recording_settings.json"):
     
     new_recording_settings_data = {"recording_ext": recording_ext,
                                    "codec": codec}
     
-    return save_json_data(file_name, new_recording_settings_data, overwrite_existing = False)
+    return save_json_data(file_name, new_recording_settings_data, overwrite_existing)
 
 # .....................................................................................................................
     
 def save_selection_history(new_search_path, new_ccw_rotations, new_timelapse_factor, new_scaling_factor,
                            file_name = "selection_history.json"):
     
-    new_selection_history_data = {"search_path": new_search_path,
+    # Replace home pathing with '~' shortcut before saving
+    home_path = os.path.expanduser("~")
+    save_search_path = new_search_path.replace(home_path, "~")
+    
+    new_selection_history_data = {"search_path": save_search_path,
                                   "ccw_rotations": new_ccw_rotation,
                                   "timelapse_factor": new_timelapse_factor,
                                   "scaling_factor": new_scaling_factor}
@@ -134,23 +181,23 @@ def get_rotation_mapping(frame_width, frame_height, rot_nx90 = 1):
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Load defaults
 
+# Get display & recording settings
+display_enabled, recording_ext, codec = parse_args()
+
 # Load selection history data to save the user some trouble
 #   Contains keys: "search_path", "ccw_rotations", "timelapse_factor"
 selection_history = load_selection_history()
-
-# Load recording settings, to allow for alternate recording settings on systems not supporting defaults
-#   Contains keys: "recording_ext", "codec"
-recording_settings = load_recording_settings()
+default_search_path = os.path.expanduser(selection_history.get("search_path"))
+default_rotation = selection_history.get("ccw_rotations", 0)
+default_timelapse = selection_history.get("timelapse_factor", 1)
+default_scale = selection_history.get("scaling_factor", 1.0)
 
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Load file(s)
 
-# Check if there are video files in the current folder
-file_list = os.listdir()
-video_exts = [".avi", ".mp4", ".mov"]
-file_exts = [os.path.splitext(each_file)[1] for each_file in file_list]
-folder_contains_videos = any([each_ext.lower() in video_exts for each_ext in file_exts])
-starting_dir = os.getcwd() if folder_contains_videos else selection_history.get("search_path", None)
+# Make sure we're using a valid starting directory
+starting_dir = default_search_path if os.path.exists(default_search_path) else os.path.expanduser("~")
+starting_dir = starting_dir if os.path.exists(starting_dir) else os.getcwd()
 
 try:
     # Give the user some info about using ranger
@@ -184,11 +231,6 @@ print("",
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Get user input
 
-# Get defaults
-default_rotation = selection_history.get("ccw_rotations", 0)
-default_timelapse = selection_history.get("timelapse_factor", 1)
-default_scale = selection_history.get("scaling_factor", 1.0)
-
 # Set timelapsing factor & rotation amount
 rotation_n90 = cli_prompt_with_defaults("Enter number of CCW 90deg rotations: ", default_rotation, return_type = int)
 tl_factor = cli_prompt_with_defaults("             Enter timelapse factor: ", default_timelapse, return_type = int)
@@ -206,11 +248,6 @@ new_ccw_rotation = rotation_n90
 new_timelapse_factor = tl_factor
 new_scaling_factor = scale_factor
 save_selection_history(new_search_path, new_ccw_rotation, new_timelapse_factor, new_scaling_factor)
-
-# Save recording settings, in case there isn't already a file
-recording_ext = recording_settings.get("recording_ext")
-codec = recording_settings.get("codec")
-save_recording_settings(recording_ext, codec)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -239,10 +276,10 @@ for each_idx, each_file in enumerate(video_file_select_list):
 
     # Set up recording paths
     file_name_only, _ = os.path.splitext(file_name)
-    rotation_name = "Rot_{}deg".format(rotation_angle_deg) if needs_rotating else ""
-    timelapse_name = "TL_x{}".format(tl_factor) if tl_factor > 1 else ""
-    scaling_name = "Scale_{}pct".format(int(100 * scale_factor)) if needs_resizing else ""
-    folder_name = "-".join([rotation_name, timelapse_name, scaling_name])    
+    rotation_name = "Rot_{}deg".format(rotation_angle_deg) if needs_rotating else None
+    timelapse_name = "TL_x{}".format(tl_factor) if tl_factor > 1 else "TL_x1"
+    scaling_name = "Scale_{}pct".format(int(100 * scale_factor)) if needs_resizing else None
+    folder_name = "-".join(filter(None, [rotation_name, timelapse_name, scaling_name]))
     save_folder = os.path.join(full_folder_path, folder_name)
     save_name = "{}_TLx{}{}".format(file_name_only, tl_factor, recording_ext)
     save_path = os.path.join(save_folder, save_name)
@@ -259,7 +296,7 @@ for each_idx, each_file in enumerate(video_file_select_list):
     frame_count = -1
     
     # Set up display
-    disp_window = SimpleWindow("Display")
+    disp_window = SimpleWindow("Display", enabled = display_enabled)
     disp_window.move(20, 20)
 
     # Run video recording loop
@@ -313,5 +350,8 @@ t_end = perf_counter()
 
 print("",
       "All done!",
-      "Total Processing time (sec): {:.3f}".format(t_end - t_start),
+      "Total processing time (sec): {:.3f}".format(t_end - t_start),
+      "             Rotation (deg): {:.0f}".format(rotation_angle_deg),
+      "           Timelapse factor: {:.0f}".format(tl_factor),
+      "             Scaling factor: {:.3f}".format(scale_factor),
       "", sep="\n")

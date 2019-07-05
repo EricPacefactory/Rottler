@@ -13,11 +13,39 @@ Created on Thu Jul  4 14:11:17 2019
 import argparse
 import os
 import json
-import cv2
-import numpy as np
-
 from time import perf_counter, sleep
 
+# Warning if numpy isn't installed
+try:
+    import numpy as np
+except ImportError:
+    print("",
+          "Couldn't import numpy!",
+          "",
+          "Need to install numpy to continue. Use:",
+          "  pip3 install numpy",
+          "", sep="\n")
+    quit()
+
+# Warning if OpenCV isn't installed
+try:
+    import cv2
+except ImportError:
+    print("",
+          "Couldn't import OpenCV!",
+          "",
+          "Need to install OpenCV to continue.",
+          "Ideally, OpenCV should be compiled on the system.",
+          "However, a simpler method is to use a pip install:",
+          "  pip3 install opencv-python",
+          "",
+          "Warning:",
+          "A pip install of OpenCV may not have full recording",
+          "capabilities!",
+          "", sep="\n")
+    quit()
+
+# Warning if tqdm (cli progress bar) isn't installed
 try:
     from tqdm import tqdm
     
@@ -214,7 +242,7 @@ try:
     
 except SystemExit:
     # Spyder debugging hack
-    test_file = "FILE190626-144121F.MOV"
+    test_file = ""
     video_file_select_list = [test_file]
     test_files_exist = [os.path.exists(each_file) for each_file in video_file_select_list]
     if not all(test_files_exist):
@@ -272,7 +300,6 @@ for each_idx, each_file in enumerate(video_file_select_list):
 
     # Get mapping used to rotate the video
     x_map, y_map = get_rotation_mapping(video_width, video_height, rotation_n90)
-    rot_height, rot_width = x_map.shape
 
     # Set up recording paths
     file_name_only, _ = os.path.splitext(file_name)

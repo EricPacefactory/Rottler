@@ -73,11 +73,15 @@ def parse_args():
     recording_settings = load_recording_settings()
     default_recording_ext = recording_settings.get("recording_ext")
     default_codec = recording_settings.get("codec")
+    default_fps = 30.0
     
     # Set up argument parsing
     ap = argparse.ArgumentParser()
-    ap.add_argument("-d", "--display", default = True, action = "store_false",
-                    help = "Disable the output display. Gives a slight speed boost & prevents pop-up interruptions.")
+    ap.add_argument("-d", "--display", default = False, action = "store_true",
+                    help = "Enable the output display. Useful to check progress, but slows down processing.")
+    ap.add_argument("-f", "--fps", default = default_fps, type = float,
+                    help = "Target framerate of the output video. \
+                            (Default: {})".format(default_fps))
     ap.add_argument("-x", "--extension", default = default_recording_ext, type = str,
                     help = "File extension of recorded videos (.avi, .mp4, .mkv, etc.). \
                             (Default: {})".format(default_recording_ext))
@@ -90,6 +94,7 @@ def parse_args():
     
     # Separate arg inputs for convenience
     arg_display = args.get("display")
+    arg_fps = args.get("fps")
     arg_codec = args.get("codec")
     arg_ext = args.get("extension")
     
@@ -105,7 +110,7 @@ def parse_args():
     # Save recording settings (but only if the arguments were different from defaults!)
     save_recording_settings(safe_ext, safe_codec, overwrite_existing = update_recording_settings)
     
-    return arg_display, safe_ext, safe_codec
+    return arg_display, arg_fps, safe_ext, safe_codec
 
 # .....................................................................................................................
 
@@ -203,6 +208,25 @@ def get_rotation_mapping(frame_width, frame_height, rot_nx90 = 1):
     return x_mapping, y_mapping
 
 # .....................................................................................................................
+    
+def no_decimal_string_format(number_for_string):
+    
+    # Split number into integer and decimal parts
+    int_part = int(number_for_string)
+    dec_part = int(round(100 * (number_for_string - int_part)))
+    
+    # Build string components
+    int_only_str = str(int_part)
+    dec_str = str(dec_part).zfill(2)
+    with_dec_str = "{}p{}".format(int_only_str, dec_str)
+    
+    # Decide which string format to output
+    contains_decimal = (dec_part > 0)
+    formatted_number_string = with_dec_str if contains_decimal else int_only_str
+    
+    return formatted_number_string
+
+# .....................................................................................................................
 # .....................................................................................................................
 
 
@@ -210,7 +234,7 @@ def get_rotation_mapping(frame_width, frame_height, rot_nx90 = 1):
 #%% Load defaults
 
 # Get display & recording settings
-display_enabled, recording_ext, codec = parse_args()
+display_enabled, target_fps, recording_ext, codec = parse_args()
 
 # Load selection history data to save the user some trouble
 #   Contains keys: "search_path", "ccw_rotations", "timelapse_factor"
@@ -256,18 +280,20 @@ print("",
       "", "*" * 48,
       sep="\n")
 
+
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Get user input
 
 # Set timelapsing factor & rotation amount
 rotation_n90 = cli_prompt_with_defaults("Enter number of CCW 90deg rotations: ", default_rotation, return_type = int)
-tl_factor = cli_prompt_with_defaults("             Enter timelapse factor: ", default_timelapse, return_type = int)
+tl_factor = cli_prompt_with_defaults("             Enter timelapse factor: ", default_timelapse, return_type = float)
 scale_factor = cli_prompt_with_defaults("               Enter scaling factor: ", default_scale, return_type = float)
 
 # For readability, figure out how much rotation we're doing
 rotation_angle_deg = (90 * rotation_n90) % 360
 needs_rotating = abs(rotation_angle_deg) > 0
 needs_resizing = abs(scale_factor - 1.0) > 0.001
+needs_timelapsing =  abs(tl_factor - 1.0) > 0.001
 scale_function = lambda frame, scaling: cv2.resize(frame, dsize = None, fx = scaling, fy = scaling)
 
 # Update selection history
@@ -276,6 +302,32 @@ new_ccw_rotation = rotation_n90
 new_timelapse_factor = tl_factor
 new_scaling_factor = scale_factor
 save_selection_history(new_search_path, new_ccw_rotation, new_timelapse_factor, new_scaling_factor)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+#%% Build file naming
+
+# Get rotation string
+rotation_name = "Rot_0deg"
+if needs_rotating:
+    rot_str = no_decimal_string_format(rotation_angle_deg)
+    rotation_name = "Rot_{}deg".format(rot_str)
+    
+# Get scaling string
+scaling_name = "Scale_100pct"
+if needs_resizing:
+    scale_pct = int(round(100 * scale_factor))
+    scale_str = no_decimal_string_format(scale_pct)
+    scaling_name = "Scale_{}pct".format(scale_str)
+    
+# Get timelapse string
+timelapse_name = "TL_x1"
+if needs_timelapsing:
+    timelapse_str = no_decimal_string_format(tl_factor)
+    timelapse_name = "TL_x{}".format(timelapse_str)
+
+# Build folder name for saving video(s)
+folder_name = "-".join(filter(None, [rotation_name, timelapse_name, scaling_name]))
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -296,28 +348,32 @@ for each_idx, each_file in enumerate(video_file_select_list):
     video_width, video_height = vreader.WH
     video_fps = vreader.fps
     video_frames = vreader.total_frames
-    video_length_sec = video_frames * video_fps
+    video_length_sec = int(round(video_frames / video_fps))
 
     # Get mapping used to rotate the video
     x_map, y_map = get_rotation_mapping(video_width, video_height, rotation_n90)
+    
+    # Figure out timelapse/fps combination
+    timelapse_fps = (video_fps * tl_factor)
+    recording_fps = min(target_fps, timelapse_fps)
+    effective_tl_factor = timelapse_fps / recording_fps
 
     # Set up recording paths
-    file_name_only, _ = os.path.splitext(file_name)
-    rotation_name = "Rot_{}deg".format(rotation_angle_deg) if needs_rotating else None
-    timelapse_name = "TL_x{}".format(tl_factor) if tl_factor > 1 else "TL_x1"
-    scaling_name = "Scale_{}pct".format(int(100 * scale_factor)) if needs_resizing else None
-    folder_name = "-".join(filter(None, [rotation_name, timelapse_name, scaling_name]))
     save_folder = os.path.join(full_folder_path, folder_name)
-    save_name = "{}_TLx{}{}".format(file_name_only, tl_factor, recording_ext)
-    save_path = os.path.join(save_folder, save_name)
     os.makedirs(save_folder, exist_ok = True)
+    file_name_only, _ = os.path.splitext(file_name)
+    save_name = "{}_{}{}".format(file_name_only, timelapse_name, recording_ext)
+    save_path = os.path.join(save_folder, save_name)
     
     # Set up recorder
-    vwriter = Video_Recorder(save_path, video_fps, None, codec = codec, enabled=True)
+    vwriter = Video_Recorder(save_path, recording_fps, None, codec = codec, enabled=True)
 
     # Set up frame/progress tracking
     proc_idx = 1 + each_idx
-    proc_msg = "Processing ({}/{}): {} ({:.0f} seconds long)".format(proc_idx, num_files, file_name, video_length_sec)
+    mins_long = video_length_sec // 60
+    sec_long = video_length_sec % 60
+    time_length_str = "{:.0f} mins, {:.0f} seconds long".format(mins_long, sec_long)
+    proc_msg = "Processing ({}/{}): {} ({})".format(proc_idx, num_files, file_name, time_length_str)
     print("", proc_msg, sep="\n")
     cli_prog_bar = tqdm(total = video_frames, mininterval = 1)
     frame_count = -1
@@ -336,11 +392,12 @@ for each_idx, each_file in enumerate(video_file_select_list):
                 break
             
             # Keep track of frames for timelapsing and update cli progress bar
-            frame_count += 1
+            frame_count += 1.0
             cli_prog_bar.update()
             
             # Only display/record data on timelapsed frames
-            if frame_count % tl_factor == 0:
+            if frame_count >= effective_tl_factor:
+                frame_count = (frame_count - effective_tl_factor)
                 
                 # Now we need the frame, so decode the frame data
                 req_break, frame = vreader.decode_read()

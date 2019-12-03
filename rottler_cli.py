@@ -308,23 +308,23 @@ save_selection_history(new_search_path, new_ccw_rotation, new_timelapse_factor, 
 #%% Build file naming
 
 # Get rotation string
-rotation_name = "Rot_0deg"
+rotation_name = "Rot0deg"
 if needs_rotating:
     rot_str = no_decimal_string_format(rotation_angle_deg)
-    rotation_name = "Rot_{}deg".format(rot_str)
+    rotation_name = "Rot{}deg".format(rot_str)
     
 # Get scaling string
-scaling_name = "Scale_100pct"
+scaling_name = "Scale100pct"
 if needs_resizing:
     scale_pct = int(round(100 * scale_factor))
     scale_str = no_decimal_string_format(scale_pct)
-    scaling_name = "Scale_{}pct".format(scale_str)
+    scaling_name = "Scale{}pct".format(scale_str)
     
 # Get timelapse string
-timelapse_name = "TL_x1"
+timelapse_name = "TLx1"
 if needs_timelapsing:
     timelapse_str = no_decimal_string_format(tl_factor)
-    timelapse_name = "TL_x{}".format(timelapse_str)
+    timelapse_name = "TLx{}".format(timelapse_str)
 
 # Build folder name for saving video(s)
 folder_name = "-".join(filter(None, [rotation_name, timelapse_name, scaling_name]))

@@ -287,7 +287,7 @@ print("",
 # Set timelapsing factor & rotation amount
 rotation_n90 = cli_prompt_with_defaults("Enter number of CCW 90deg rotations: ", default_rotation, return_type = int)
 tl_factor = cli_prompt_with_defaults("             Enter timelapse factor: ", default_timelapse, return_type = float)
-scale_factor = cli_prompt_with_defaults("               Enter scaling factor: ", default_scale, return_type = float)
+scale_factor = cli_prompt_with_defaults("     Enter dimension scaling factor: ", default_scale, return_type = float)
 
 # For readability, figure out how much rotation we're doing
 rotation_angle_deg = (90 * rotation_n90) % 360

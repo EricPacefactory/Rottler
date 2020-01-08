@@ -86,7 +86,7 @@ def parse_args():
                     help = "File extension of recorded videos (.avi, .mp4, .mkv, etc.). \
                             (Default: {})".format(default_recording_ext))
     ap.add_argument("-c", "--codec", default = default_codec, type = str,
-                    help = "FourCC code used for recording (X264, XVID, MJPG, mp4v, etc.). \
+                    help = "FourCC code used for recording (avc1, X264, XVID, MJPG, mp4v, etc.). \
                             (Default: {})".format(default_codec))
     
     # Get arg inputs into a dictionary
@@ -152,8 +152,8 @@ def save_json_data(save_file_name, new_data_dict, overwrite_existing = True):
 
 def load_recording_settings(file_name = "recording_settings.json"):
     
-    default_settings = {"recording_ext": ".avi",
-                        "codec": "X264"}
+    default_settings = {"recording_ext": ".mp4",
+                        "codec": "avc1"}
     
     return load_json_data(file_name, default_settings)
 

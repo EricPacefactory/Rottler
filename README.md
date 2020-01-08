@@ -39,7 +39,7 @@ Following the file selection, the user is prompted with settings for the number 
 
 After running the script once, a file named *recording_settings.json* will be created in the script directory. This file contains two settings that specify the video container and codec used when recording videos.
 
-If OpenCV was pip installed, the default settings (*.avi* & *X264*) may not work! Additionally, there may not be an obvious error to warn of recording issues (instead, either there will not be a recorded file or the file will be empty/corrupt).
+If OpenCV was pip installed, the default settings (*.mp4* & *avc1*) may not work! Additionally, there may not be an obvious error to warn of recording issues (instead, either there will not be a recorded file or the file will be empty/corrupt).
 
 To avoid pip install issues, you may need to alter the recording settings. On Ubuntu 18.04, the following settings work with a pip install (as of July 4 :rocket:, 2019):
 
@@ -47,10 +47,10 @@ To avoid pip install issues, you may need to alter the recording settings. On Ub
 (recording_settings.json)
 
 {
-  "recording_ext": ".avi",
-  "codec": "XVID"
+  "recording_ext": ".mp4",
+  "codec": "avc1"
 }
 ```
 
-Note however that XVID will generate much larger (~5x) video files than X264. If XVID fails, MJPG may work, but generates even bigger (~10x) files.
+Note however that XVID will generate much larger (~5x) video files than avc1/X264. If XVID fails, MJPG may work, but generates even bigger (~10x) files.
 If file size is an issue, it may be best to install OpenCV from source.

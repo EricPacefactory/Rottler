@@ -12,7 +12,9 @@ Created on Thu Jan 31 15:42:22 2019
 
 
 import os
-import subprocess
+import datetime as dt
+
+from subprocess import run as subproc_run
 
 from time import sleep
 
@@ -207,10 +209,383 @@ class Color(str):
         return self
 
 
+# /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+class Datetime_Input_Parser:
+    
+    # Store date & time separator characters
+    date_separator = "/"
+    time_separator = ":"
+    date_time_separator = " "
+    
+    # Store datetime string formatting codes
+    date_format = "%Y/%m/%d"
+    time_format = "%H:%M:%S"
+    datetime_format = "%Y/%m/%d %H:%M:%S"
+    
+    # .................................................................................................................
+    
+    def __init__(self):
+        class_name = self.__class__.__name__
+        raise TypeError("This class isn't meant to be instantiated! ({})".format(class_name))
+    
+    # .................................................................................................................
+    
+    @classmethod
+    def set_separators(cls, date_separator = "/", time_separator = ":", date_time_separator = " "):
+        
+        # Store updated separators
+        cls.date_separator = date_separator
+        cls.time_separator = time_separator
+        cls.date_time_separator = date_time_separator
+        
+        # Re-build date/time formatting strings
+        cls.date_format = "%Y{}%m{}%d".format(cls.date_separator, cls.date_separator)
+        cls.time_format = "%H{}%M{}%S".format(cls.time_separator, cls.time_separator)
+        cls.datetime_format = "{}{}{}".format(cls.date_format, cls.date_time_separator, cls.time_format)        
+
+    # .................................................................................................................
+    
+    @classmethod
+    def cli_prompt_start_end_datetimes(cls, bounding_start_dt, bounding_end_dt,
+                                       start_dt_prompt = "Enter start time: ",
+                                       end_dt_prompt = "  Enter end time: ",
+                                       print_help_before_prompt = True,
+                                       always_show_date = False,
+                                       debug_mode = False):
+        
+        # Provide feedback if needed
+        if print_help_before_prompt:
+            cls.print_dt_str_input_help()
+        
+        # Round bounding times to nearest second, since user input only accepts seconds
+        rounded_start_dt = bounding_start_dt.replace(microsecond = 0)
+        rounded_end_dt = (bounding_end_dt + dt.timedelta(microseconds = 999999)).replace(microsecond = 0)
+        
+        # Decide how to display the default date/times
+        different_dates = (rounded_start_dt.date() != rounded_end_dt.date())
+        show_dates = (always_show_date or different_dates)
+        default_display_format = cls.datetime_format if show_dates else cls.time_format
+        
+        # Provide user with start date/time prompt
+        default_start_str = rounded_start_dt.strftime(default_display_format)
+        start_str = cli_prompt_with_defaults(start_dt_prompt, default_start_str, debug_mode = debug_mode)
+        
+        # Provide user with end date/time prompt
+        default_end_str = rounded_end_dt.strftime(default_display_format)
+        end_str = cli_prompt_with_defaults(end_dt_prompt, default_end_str, debug_mode = debug_mode)
+        
+        # Parse user inputs to generate output datetimes
+        user_start_dt, user_end_dt = cls.parse_user_datetimes(start_str, end_str, rounded_start_dt, rounded_end_dt)
+        
+        # Add timezone info back into results
+        user_start_dt = user_start_dt.replace(tzinfo = rounded_start_dt.tzinfo)
+        user_end_dt = user_end_dt.replace(tzinfo = rounded_end_dt.tzinfo)
+        
+        return user_start_dt, user_end_dt
+
+    # .................................................................................................................
+
+    @classmethod
+    def parse_user_datetimes(cls, user_start_str, user_end_str, bounding_start_dt, bounding_end_dt):
+        
+        # Clean user inputs
+        clean_start_str = user_start_str.strip()
+        clean_end_str = user_end_str.strip()
+        
+        # Check if either time is using relative timing
+        start_is_pos_relative = (clean_start_str[0] == "+")
+        start_is_neg_relative = (clean_start_str[0] == "-")
+        end_is_pos_relative = (clean_end_str[0] == "+")
+        end_is_neg_relative = (clean_end_str[0] == "-")
+        start_is_relative = (start_is_pos_relative or start_is_neg_relative)
+        end_is_relative = (end_is_pos_relative or end_is_neg_relative)
+        
+        # Further cleaning to remove relative indicators
+        abs_start_str = clean_start_str[1:] if start_is_relative else clean_start_str
+        abs_end_str = clean_end_str[1:] if end_is_relative else clean_end_str
+        
+        # Split dates and times (if present)
+        start_split_date_time = cls.split_date_and_time_strs(abs_start_str)
+        end_split_date_time = cls.split_date_and_time_strs(abs_end_str)
+        
+        # Create initial absolute and delta times
+        start_dt = bounding_start_dt
+        end_dt = bounding_end_dt
+        start_delta = dt.timedelta(0)
+        end_delta = dt.timedelta(0)
+        
+        # Generate relative/absolute start times
+        if start_is_relative:
+            start_delta = cls.build_time_delta(*start_split_date_time)
+        else:
+            start_dt = cls.complete_missing_datetime(bounding_start_dt, *start_split_date_time)
+            
+        # Generate relative/absolute end times
+        if end_is_relative:
+            end_delta = cls.build_time_delta(*end_split_date_time)
+        else:
+            end_dt = cls.complete_missing_datetime(bounding_end_dt, *end_split_date_time)
+        
+        # Apply relative timing if needed (order of checks is important!)
+        #   (+) start -> add to start bounding time
+        #   (-) start -> subtract off end time
+        #   (+) end -> add to start time
+        #   (-) end -> subtract off end bounding time
+        if end_is_neg_relative:
+            end_dt = bounding_end_dt - end_delta
+        if start_is_pos_relative:
+            start_dt = bounding_start_dt + start_delta
+        if start_is_neg_relative:
+            start_dt = end_dt - start_delta
+        if end_is_pos_relative:
+            end_dt = start_dt + end_delta
+        
+        # Make sure we don't return a start dt ahead of the end dt!
+        if end_dt < start_dt:
+            same_dates = (start_dt.date() == end_dt.date())
+            display_format = cls.time_format if same_dates else cls.datetime_format
+            start_dt_str = start_dt.strftime(display_format)
+            end_dt_str = end_dt.strftime(display_format)
+            err_msg_list = ["The provided start time occurs after the provided end time!",
+                            "                Start: {}".format(start_dt_str),
+                            "                  End: {}".format(end_dt_str)]
+            raise AttributeError("\n".join(err_msg_list))
+        
+        return start_dt, end_dt
+
+    # .................................................................................................................
+
+    @classmethod
+    def split_date_and_time_strs(cls, datetime_str):
+        
+        '''
+        Helper function which takes in a date/time/datetime string and outputs the date and time components separately
+        If a date/time isn't present, the function will output None.
+        
+        Inputs:
+            datetime_str: (String) -> A date or time or datetime string. 
+                                      Dates should be in format YYYY/mm/dd
+                                      Times should be in format HH:MM:SS
+                                      If both date and time are present, they should be separated by a space
+                                      (the date should always be first!)
+                                  
+        Outputs:
+            output_date_str, output_time_str
+        '''
+        
+        # Initialize outputs
+        output_date_str = None
+        output_time_str = None
+        
+        # Assume date and time are separated by a space (by default), so try to split by that
+        clean_time_str = datetime_str.strip()
+        split_date_time = clean_time_str.split(cls.date_time_separator)
+        
+        # Check if we have two entries (date & time), one entry (only date or time) or some other amount (not valid)
+        num_entries = len(split_date_time)
+        have_date_and_time = (num_entries == 2)
+        have_date_or_time = (num_entries == 1)
+        
+        # Catch errors
+        if not (have_date_and_time or have_date_or_time):
+            raise AttributeError("Couldn't parse date and time from: {}".format(clean_time_str))
+            
+        # If only one entry is provided, we have to decide if it is time or date
+        if have_date_or_time:
+            is_date = (cls.date_separator in clean_time_str)
+            output_date_str = clean_time_str if is_date else None
+            output_time_str = None if is_date else clean_time_str
+        
+        # If both entries are provided, just split them
+        if have_date_and_time:
+            output_date_str, output_time_str = split_date_time
+        
+        return output_date_str, output_time_str
+
+# .....................................................................................................................
+
+    @classmethod
+    def complete_missing_datetime(cls, base_datetime, date_str, time_str):
+        
+        # Break apart date and time strings into individual numbers we can use to build a datetime object
+        num_years, num_months, num_days = cls.parse_dt_triplet_str(date_str, cls.date_separator)
+        num_hours, num_minutes, num_seconds = cls.parse_dt_triplet_str(time_str, cls.time_separator)
+        
+        # Replace components that are non-None in absolute datetime
+        replace_if_not_none = lambda replace, base: int(base if replace is None else replace)
+        abs_year = replace_if_not_none(num_years, base_datetime.year)
+        abs_month = replace_if_not_none(num_months, base_datetime.month)
+        abs_day = replace_if_not_none(num_days, base_datetime.day)
+        abs_hour = replace_if_not_none(num_hours, base_datetime.hour)
+        abs_min = replace_if_not_none(num_minutes, base_datetime.minute)
+        abs_sec = replace_if_not_none(num_seconds, base_datetime.second)
+        
+        # Build absolute datetime
+        absolute_datetime = dt.datetime(year = abs_year, month = abs_month, day = abs_day,
+                                        hour = abs_hour, minute = abs_min, second = abs_sec,
+                                        tzinfo = base_datetime.tzinfo)
+        
+        return absolute_datetime
+
+    # .................................................................................................................
+
+    @classmethod
+    def build_time_delta(cls, date_str, time_str):
+        
+        # Break apart date and time strings into individual numbers we can use to build a timedelta object
+        num_years, num_months, num_days = cls.parse_dt_triplet_str(date_str, cls.date_separator)
+        num_hours, num_minutes, num_seconds = cls.parse_dt_triplet_str(time_str, cls.time_separator)
+        
+        # Create all the timedelta components (use a value of zero if not provided)
+        use_zero_if_none = lambda value: 0 if value is None else value
+        del_years = use_zero_if_none(num_years)
+        del_months = use_zero_if_none(num_months)
+        del_days = use_zero_if_none(num_days)
+        del_hours = use_zero_if_none(num_hours)
+        del_minutes = use_zero_if_none(num_minutes)
+        del_seconds = use_zero_if_none(num_seconds)
+        
+        # Error if we get relative years/months, since these can be ambiguous
+        have_months = (del_months > 0)
+        have_years = (del_years > 0)
+        if have_months:
+            err_msg = "Can't specify relative months, since this can result in undefined dates! Use days instead."
+            raise TypeError(err_msg)
+        if have_years:
+            err_msg = "Can't specify relative years, since this can result in undefined dates! Use days instead."
+            raise TypeError(err_msg)
+        
+        # Build timedelta
+        absolute_datetime = dt.timedelta(days = del_days, 
+                                         hours = del_hours, minutes = del_minutes, seconds = del_seconds)
+        
+        return absolute_datetime
+
+    # .................................................................................................................
+
+    @classmethod
+    def print_dt_str_input_help(cls):
+        
+        # Build an example datetime
+        example_dt = dt.datetime.now()
+        example_dt_str = example_dt.strftime(cls.datetime_format)
+        
+        print("", 
+              "Times should be entered in the format:",
+              "  {}".format(example_dt_str),
+              "",
+              "Any missing components (for example, the year or full date)",
+              "will be replaced with the provided default value(s).",
+              "",
+              "Times can alternatively be entered as relative values by using",
+              "a plus (+) or minus (-) sign in front of the time.",
+              "",
+              "Notes on relative times:",
+              "  Plus  (+) start times will be interpretted relative to the default start time.",
+              "  Minus (-) start times will be interpretted relative to the provided end time.",
+              "  Plus  (+) end   times will be interpretted relative to the provided start time.",
+              "  Minus (-) end   times will be interpretted relative to the default end time.", 
+              "  Cannot use relative years or months!",
+              sep = "\n")
+        
+        return
+
+
+    # .................................................................................................................
+
+    @staticmethod
+    def parse_dt_triplet_str(date_or_time_str, entry_separator):
+        
+        # Initialize outputs
+        entry_0 = None
+        entry_1 = None
+        entry_2 = None
+        
+        # Don't do anything in the case of non-inputs
+        if date_or_time_str is None:
+            return entry_0, entry_1, entry_2
+        
+        # Split date or time components apart 
+        # ("2020/01/05" -> ["2020", "01", "05"], using entry_separator = "/")
+        # ("15:04:22" -> ["15", "04", "22"]), using entry separator = ":")
+        str_list = date_or_time_str.split(entry_separator)
+        
+        # Catch cases with weird number of entries
+        num_entries = len(str_list)
+        if num_entries not in {1, 2, 3}:
+            raise AttributeError("Error splitting entries: {} with {}".format(date_or_time_str, entry_separator))
+            
+        # Handle different input cases manually
+        if num_entries == 1:
+            entry_2 = float(str_list[0])
+        elif num_entries == 2:
+            entry_1 = int(str_list[0])
+            entry_2 = float(str_list[1])
+        elif num_entries == 3:
+            entry_0 = int(str_list[0])
+            entry_1 = int(str_list[1])
+            entry_2 = float(str_list[2])    
+        
+        return entry_0, entry_1, entry_2
+    
+    # .................................................................................................................
+    
+    @staticmethod
+    def limit_start_end_range(start_dt, end_dt, max_timedelta_hours = 1,
+                              return_same_end_dt = True):
+        
+        ''' Helper function which limits the time range between the given start and end times '''
+        
+        # Check if the start-to-end times exceed the max allowed range
+        start_end_delta = (end_dt - start_dt)
+        limited_timedelta = dt.timedelta(hours = max_timedelta_hours)
+        need_to_limit = (start_end_delta > limited_timedelta)
+        
+        # If the times are already within limits, we're good!
+        if not need_to_limit:
+            return start_dt, end_dt
+        
+        # If we get here, the times exceed the max range, so decide how to fix things...
+        if return_same_end_dt:
+            limited_end_dt = end_dt
+            limited_start_dt = end_dt - limited_timedelta
+        else:
+            limited_start_dt = start_dt
+            limited_end_dt = start_dt + limited_timedelta
+        
+        return limited_start_dt, limited_end_dt
+    
+    # .................................................................................................................
+    
+    @classmethod
+    def print_start_end_time_range(cls, selected_start_dt, selected_end_dt):
+        
+        '''
+        Helper function which prints out a selected start/end datetime.
+        Intended for use with the results from calling cli_prompt_start_end_datetimes(...) function
+        '''
+        
+        # Convert datetimes to string format for printing
+        start_dt_str = dt.datetime.strftime(selected_start_dt, cls.datetime_format)
+        end_dt_str = dt.datetime.strftime(selected_end_dt, cls.datetime_format)
+        
+        # Print indicator of start/end timing
+        print("",
+              "--- Selected time range ---",
+              "",
+              "  {} (start)".format(start_dt_str),
+              "  {} (end)".format(end_dt_str),
+              sep = "\n")
+        
+        return
+
+    # .................................................................................................................
+    # .................................................................................................................
+
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Define Functions
-
-#Color(text).bold().blue()
 
 # .....................................................................................................................
 
@@ -325,7 +700,7 @@ def clear_terminal(pre_delay_sec = 0, post_delay_sec = 0):
     # Try to clear the screen in a way that works on all operating systems
     clear_worked = False
     try:
-        subprocess.run("clear")
+        subproc_run("clear")
         clear_worked = True
     except:
         pass
@@ -333,7 +708,7 @@ def clear_terminal(pre_delay_sec = 0, post_delay_sec = 0):
     # Clearing can fail on Windows, so try another clear command if needed
     if not clear_worked:
         try:
-            subprocess.run("cls")
+            subproc_run("cls")
         except:
             pass
     
@@ -760,149 +1135,18 @@ def cli_confirm(confirm_text,
     return confirm_response
 
 # .....................................................................................................................
+# .....................................................................................................................
+
 
 # ---------------------------------------------------------------------------------------------------------------------
-#%% RANGER functions
-
-# .....................................................................................................................
-    
-def ranger_spyder_check():
-    if _using_spyder():
-        print("",
-              "Can't run 'ranger' in spyder IDE!",
-              "",
-              "Quitting...", sep="\n")
-        _safe_quit()
-
-# .....................................................................................................................
-
-def ranger_exists():
-    ranger_spyder_check()    
-    from shutil import which
-    return True if which("ranger") else False
-
-# .....................................................................................................................
-
-def ranger_missing_message(quit_after_message = True):
-    
-    print("",
-          "Could not find program 'ranger'!",
-          "To install on Ubuntu, use:",
-          "  sudo apt install ranger",
-          "",
-          "Quitting...", sep="\n")
-    
-    if quit_after_message:
-        _safe_quit()
-
-# .....................................................................................................................
-
-def ranger_file_select(start_dir = "~/Desktop", temp_file_path = "~/choosefile_ranger"):
-    
-    # First make sure ranger exists, before trying to use it for file selection!
-    if not ranger_exists():
-        ranger_missing_message(quit_after_message = True)
-        
-    import subprocess
-        
-    # Build actual pathing
-    launch_path = os.path.expanduser(start_dir)
-    launch_path = launch_path if os.path.exists(launch_path) else "/"
-    choosefile_path = os.path.expanduser(temp_file_path)
-    
-    # Run ranger
-    run_commands = ["ranger", launch_path, "--choosefile", choosefile_path]
-    subprocess.run(run_commands)
-    
-    # Make sure the choosefile is there so we can read it
-    if not os.path.exists(choosefile_path):
-        raise FileNotFoundError("RANGER ERROR: missing choosefile")
-    
-    # Read the path in choosefile and then delete the choosefile itself!
-    with open(choosefile_path, "r") as in_file:
-        selected_file_path = in_file.read()
-    os.remove(choosefile_path)
-    
-    # Make sure the selected file path is valid
-    if not os.path.exists(selected_file_path):
-        raise FileNotFoundError("RANGER ERROR: selected file path is invalid ({})".format(selected_file_path))
-    
-    return selected_file_path
-
-# .....................................................................................................................
-    
-def ranger_multifile_select(start_dir = "~/Desktop", temp_file_path = "~/choosefiles_ranger", sort_output = True):
-    
-    # First make sure ranger exists, before trying to use it for file selection!
-    if not ranger_exists():
-        ranger_missing_message(quit_after_message = True)
-        
-    import subprocess
-        
-    # Build actual pathing
-    launch_path = os.path.expanduser(start_dir)
-    choosefile_path = os.path.expanduser(temp_file_path)
-    
-    # Run ranger
-    run_commands = ["ranger", launch_path, "--choosefiles", choosefile_path]
-    subprocess.run(run_commands)
-    
-    # Make sure the choosefile is there so we can read it
-    if not os.path.exists(choosefile_path):
-        raise FileNotFoundError("RANGER ERROR: missing choosefile")
-    
-    # Read the path in choosefile and then delete the choosefile itself!
-    with open(choosefile_path, "r") as in_file:
-        select_file_paths_str = in_file.read()
-        selected_file_paths_list = sorted(select_file_paths_str.splitlines())
-    os.remove(choosefile_path)
-    
-    # Make sure the selected file path is valid
-    for each_path in selected_file_paths_list:
-        if not os.path.exists(each_path):
-            raise FileNotFoundError("RANGER ERROR: selected file path is invalid ({})".format(each_path))
-            
-    # Sort the output if needed
-    if sort_output:
-        selected_file_paths_list.sort()
-    
-    return selected_file_paths_list
-
-# .....................................................................................................................
-
-def ranger_preprompt(message_string = "Please use ranger cli to select a file", 
-                     prepend_newline = True,
-                     delay_before_input_sec = 0.5):
-    
-    ''' Function used to provide some context to the user before launching into ranger '''
-    
-    # Add empty line prior to message, if needed
-    if prepend_newline:
-        print("")
-    
-    # Print message with delay and input to block further execution without user input
-    print(message_string)
-    sleep(delay_before_input_sec)
-    input("  Press Enter key to continue...")
-    
-    return
-    
-# .....................................................................................................................
-# .....................................................................................................................    
+#%% Datetime parsing functions
 
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Demo
     
 if __name__ == "__main__":
     
-    subprocess.run("cls")
-    
-    # Test cli select from lists
-    '''
-    desktop_path = os.path.expanduser("~/Desktop")
-    a,b,c = cli_file_list_select(desktop_path)    
-    x,y,z = cli_folder_list_select(desktop_path)
-    '''
+    clear_terminal()
     
     # Example of colored text
     reg = Color().green
@@ -917,6 +1161,14 @@ if __name__ == "__main__":
     
     # Test cli confirm
     cli_confirm("True or not?", default_response = True, true_indicator = "Correct")
+    
+    # Test datetime parser
+    sdt = dt.datetime(2020, 3, 11, 11, 5, 0, 1)
+    edt = dt.datetime(2020, 3, 11, 14, 0, 0, 1)
+    start_dt, end_dt = Datetime_Input_Parser.cli_prompt_start_end_datetimes(sdt, edt)
+    
+    print(start_dt.strftime(Datetime_Input_Parser.datetime_format))
+    print(end_dt.strftime(Datetime_Input_Parser.datetime_format))
 
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Scrap

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jul  4 14:11:17 2019
+Created on Tue Jun  2 15:38:03 2020
 
 @author: eo
 """
@@ -13,7 +13,7 @@ Created on Thu Jul  4 14:11:17 2019
 import argparse
 import os
 import json
-from time import perf_counter, sleep
+from time import perf_counter
 
 # Warning if numpy isn't installed
 try:
@@ -60,8 +60,8 @@ except ImportError:
 
 from local.eolib.video.windowing import SimpleWindow
 from local.eolib.video.read_write import Video_Reader, Video_Recorder
-from local.eolib.utils.cli_tools import cli_prompt_with_defaults, cli_confirm
-from local.eolib.utils.ranger_tools import ranger_multifile_select
+from local.eolib.utils.cli_tools import cli_prompt_with_defaults
+from local.eolib.utils.gui_tools import gui_file_select_many
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -254,17 +254,7 @@ starting_dir = default_search_path if os.path.exists(default_search_path) else o
 starting_dir = starting_dir if os.path.exists(starting_dir) else os.getcwd()
 
 try:
-    # Give the user some info about using ranger
-    user_info_msgs = ["Select one or more files to record with rotation/timelapsing",
-                      "  - Use spacebar to select multiple files",
-                      "  - Press enter to confirm selection",
-                      "",
-                      "Press enter to continue..."]
-    cli_confirm("\n".join(user_info_msgs), append_default_indicator = False)
-    sleep(0.5)
-    
-    # Select files using ranger
-    video_file_select_list = ranger_multifile_select(starting_dir)
+    video_file_select_list = gui_file_select_many(starting_dir, window_title = "Select video(s)")
     
 except SystemExit:
     # Spyder debugging hack
